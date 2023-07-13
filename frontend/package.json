@@ -8,6 +8,7 @@
     "build": "vite build && ./create_xdc.sh",
     "serve": "vite preview",
     "lint": "eslint . --ext .tsx",
+    "check-types": "tsc --noEmit",
     "test": "vitest run"
   },
   "license": "MIT",
