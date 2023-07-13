@@ -1,4 +1,4 @@
-use super::{AppInfo, WebxdcStatusUpdate};
+use super::WebxdcStatusUpdatePayload;
 use crate::{
     bot::State,
     db,
@@ -14,53 +14,7 @@ use deltachat::{
     message::MsgId,
 };
 use log::{info, warn};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use ts_rs::TS;
-
-#[derive(Deserialize, TS)]
-#[ts(export)]
-#[ts(export_to = "frontend/src/bindings/")]
-enum StoreRequest {
-    Update {
-        /// Requested update sequence number.
-        serial: u32,
-        /// Listof apps selected for caching.
-        #[serde(default)]
-        apps: Vec<(String, u32)>,
-    },
-    Download {
-        /// ID of the requested application.
-        app_id: String,
-    },
-}
-
-#[derive(TS, Serialize)]
-#[ts(export)]
-#[ts(export_to = "frontend/src/bindings/")]
-#[serde(tag = "type")]
-pub enum StoreResponse {
-    DownloadOkay {
-        /// app_id of the downloaded app.
-        app_id: String,
-        /// Name to be used as filename in `sendToChat`.
-        name: String,
-        /// Base64 encoded webxdc.
-        data: String,
-    },
-    DownloadError {
-        app_id: String,
-        error: String,
-    },
-    Update {
-        /// List of new / updated app infos.
-        app_infos: Vec<AppInfo>,
-        serial: i32,
-        /// `app_id`s of apps that will receive an update.
-        /// The frontend can use these to set the state to updating.
-        updating: Vec<String>,
-    },
-}
 
 pub async fn handle_message(
     context: &Context,
@@ -86,63 +40,57 @@ pub async fn handle_status_update(
     context: &Context,
     state: Arc<State>,
     msg_id: MsgId,
-    update: String,
+    payload: WebxdcStatusUpdatePayload,
 ) -> anyhow::Result<()> {
-    if let Ok(req) = serde_json::from_str::<WebxdcStatusUpdate<StoreRequest>>(&update) {
-        match req.payload {
-            StoreRequest::Update { serial, apps } => {
-                info!("Handling store update request");
+    match payload {
+        WebxdcStatusUpdatePayload::UpdateRequest { serial, apps } => {
+            info!("Handling store update request");
 
-                // Get all updating xdcs
-                let mut updating = vec![];
-                let conn = &mut *state.db.acquire().await?;
-                for (app_id, version) in apps {
-                    if db::maybe_get_greater_version(conn, &app_id, version).await? {
-                        updating.push(app_id);
-                    }
-                }
-
-                info!("Updating multiple client apps: {:?}", updating);
-
-                send_newest_updates(
-                    context,
-                    msg_id,
-                    &mut *state.db.acquire().await?,
-                    serial,
-                    updating.clone(),
-                )
-                .await?;
-
-                // Send updates
-                for app_id in &updating {
-                    let context = context.clone();
-                    let state = state.clone();
-                    let app_id = app_id.clone();
-                    let resp = handle_download(&state, app_id).await;
-                    send_update_payload_only(&context, msg_id, resp).await?;
+            // Get all updating xdcs
+            let mut updating = vec![];
+            let conn = &mut *state.db.acquire().await?;
+            for (app_id, version) in apps {
+                if db::maybe_get_greater_version(conn, &app_id, version).await? {
+                    updating.push(app_id);
                 }
             }
-            StoreRequest::Download { app_id } => {
-                info!("Handling store download");
+
+            info!("Updating multiple client apps: {:?}", updating);
+
+            send_newest_updates(
+                context,
+                msg_id,
+                &mut *state.db.acquire().await?,
+                serial,
+                updating.clone(),
+            )
+            .await?;
+
+            // Send updates
+            for app_id in &updating {
+                let context = context.clone();
+                let state = state.clone();
+                let app_id = app_id.clone();
                 let resp = handle_download(&state, app_id).await;
-                send_update_payload_only(context, msg_id, resp).await?;
+                send_update_payload_only(&context, msg_id, resp).await?;
             }
         }
-    } else {
-        info!(
-            "Ignoring self-sent update: {}",
-            &update.get(..100.min(update.len())).unwrap_or_default()
-        )
+        WebxdcStatusUpdatePayload::Download { app_id } => {
+            info!("Handling store download");
+            let resp = handle_download(&state, app_id).await;
+            send_update_payload_only(context, msg_id, resp).await?;
+        }
+        _ => {}
     }
     Ok(())
 }
 
-pub async fn handle_download(state: &State, app_id: String) -> StoreResponse {
+pub async fn handle_download(state: &State, app_id: String) -> WebxdcStatusUpdatePayload {
     match get_webxdc_data(state, &app_id).await {
-        Ok((data, name)) => StoreResponse::DownloadOkay { data, name, app_id },
+        Ok((data, name)) => WebxdcStatusUpdatePayload::DownloadOkay { data, name, app_id },
         Err(e) => {
             warn!("Error while handling download request: {}", e);
-            StoreResponse::DownloadError {
+            WebxdcStatusUpdatePayload::DownloadError {
                 error: e.to_string(),
                 app_id,
             }

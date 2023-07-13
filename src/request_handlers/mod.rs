@@ -109,26 +109,60 @@ pub enum ChatType {
     Genesis,
 }
 
-/// A generic webxdc update
-#[derive(Deserialize)]
-pub struct WebxdcStatusUpdate<T> {
-    pub payload: T,
+/// WebXDC status update.
+#[derive(Serialize, Deserialize)]
+pub struct WebxdcStatusUpdate {
+    pub payload: WebxdcStatusUpdatePayload,
 }
 
+/// WebXDC status update payload.
 #[derive(Serialize, Deserialize, TS)]
 #[ts(export)]
 #[ts(export_to = "frontend/src/bindings/")]
 #[serde(tag = "type")]
-
-pub enum GeneralFrontendResponse {
-    Outdated { critical: bool, version: u32 },
-    UpdateSent,
-}
-
-#[derive(Deserialize, TS)]
-#[ts(export)]
-#[ts(export_to = "frontend/src/bindings/")]
-#[serde(tag = "type")]
-pub enum GeneralFrontendRequest {
+pub enum WebxdcStatusUpdatePayload {
+    // General update request.
     UpdateWebxdc,
+
+    // General update response.
+    Outdated {
+        critical: bool,
+        version: u32,
+    },
+    UpdateSent,
+
+    // Store WebXDC requests.
+    UpdateRequest {
+        /// Requested update sequence number.
+        serial: u32,
+        /// List of apps selected for caching.
+        #[serde(default)]
+        apps: Vec<(String, u32)>,
+    },
+    Download {
+        /// ID of the requested application.
+        app_id: String,
+    },
+
+    // Store bot responses.
+    DownloadOkay {
+        /// app_id of the downloaded app.
+        app_id: String,
+        /// Name to be used as filename in `sendToChat`.
+        name: String,
+        /// Base64 encoded webxdc.
+        data: String,
+    },
+    DownloadError {
+        app_id: String,
+        error: String,
+    },
+    Update {
+        /// List of new / updated app infos.
+        app_infos: Vec<AppInfo>,
+        serial: i32,
+        /// `app_id`s of apps that will receive an update.
+        /// The frontend can use these to set the state to updating.
+        updating: Vec<String>,
+    },
 }
