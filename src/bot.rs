@@ -19,10 +19,7 @@ use crate::{
     db::{self, MIGRATOR},
     messages::store_message,
     project_dirs,
-    request_handlers::{
-        genesis, store, ChatType, GeneralFrontendRequest, GeneralFrontendResponse,
-        WebxdcStatusUpdate,
-    },
+    request_handlers::{genesis, store, ChatType, WebxdcStatusUpdate, WebxdcStatusUpdatePayload},
     utils::{
         configure_from_env, read_webxdc_versions, send_newest_updates, send_update_payload_only,
         send_webxdc, unpack_assets, Webxdc, WebxdcVersions,
@@ -303,37 +300,35 @@ impl Bot {
         let chat_type = db::get_chat_type(conn, chat_id).await?;
         let (webxdc, version) = db::get_webxdc_version(conn, msg.get_id()).await?;
 
-        if let Ok(request) =
-            serde_json::from_str::<WebxdcStatusUpdate<GeneralFrontendRequest>>(&update)
-        {
-            match request.payload {
-                GeneralFrontendRequest::UpdateWebxdc => {
-                    let msg = send_webxdc(context, &state, chat_id, webxdc, Some(store_message()))
-                        .await?;
-                    send_newest_updates(context, msg, &mut *state.db.acquire().await?, 0, vec![])
-                        .await?;
-                    send_update_payload_only(context, msg_id, GeneralFrontendResponse::UpdateSent)
-                        .await?;
-                    return Ok(());
-                }
-            }
+        let Ok(request) = serde_json::from_str::<WebxdcStatusUpdate>(&update) else {
+            info!(
+                "Ignoring WebXDC update: {}",
+                &update.get(..100.min(update.len())).unwrap_or_default()
+            );
+            return Ok(());
         };
+
+        if let WebxdcStatusUpdatePayload::UpdateWebxdc = request.payload {
+            let msg = send_webxdc(context, &state, chat_id, webxdc, Some(store_message())).await?;
+            send_newest_updates(context, msg, &mut *state.db.acquire().await?, 0, vec![]).await?;
+            send_update_payload_only(context, msg_id, WebxdcStatusUpdatePayload::UpdateSent)
+                .await?;
+            return Ok(());
+        }
 
         if version < state.webxdc_versions.get(webxdc) {
             info!("Webxdc version mismatch, updating");
 
-            if serde_json::from_str::<WebxdcStatusUpdate<GeneralFrontendResponse>>(&update).is_ok()
-            {
+            if serde_json::from_str::<WebxdcStatusUpdate>(&update).is_ok() {
                 return Ok(());
             }
 
             // Only try to upgrade version, if the webxdc event is _not_ an update response already
-            if serde_json::from_str::<WebxdcStatusUpdate<GeneralFrontendRequest>>(&update).is_err()
-            {
+            if serde_json::from_str::<WebxdcStatusUpdate>(&update).is_err() {
                 send_update_payload_only(
                     context,
                     msg_id,
-                    GeneralFrontendResponse::Outdated {
+                    WebxdcStatusUpdatePayload::Outdated {
                         version: state.webxdc_versions.get(webxdc),
                         critical: true,
                     },
@@ -344,7 +339,7 @@ impl Bot {
         }
 
         if chat_type == ChatType::Store {
-            store::handle_status_update(context, state, msg_id, update).await?
+            store::handle_status_update(context, state, msg_id, request.payload).await?
         }
 
         Ok(())

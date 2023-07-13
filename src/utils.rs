@@ -24,7 +24,7 @@ use tokio::task::JoinHandle;
 use crate::{
     bot::State,
     db,
-    request_handlers::{store::StoreResponse, AppInfo, WexbdcManifest},
+    request_handlers::{AppInfo, WebxdcStatusUpdatePayload, WexbdcManifest},
     STORE_XDC,
 };
 
@@ -87,7 +87,7 @@ pub async fn send_newest_updates(
 ) -> anyhow::Result<()> {
     let app_infos: Vec<_> = db::get_active_app_infos_since(db, serial).await?;
     let serial = db::get_last_serial(db).await?;
-    let resp = StoreResponse::Update {
+    let resp = WebxdcStatusUpdatePayload::Update {
         app_infos,
         serial,
         updating,
